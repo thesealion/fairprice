@@ -14,8 +14,8 @@ type Ticker string
 
 const (
 	BTCUSDTicker Ticker = "BTC_USD"
-	Delay               = 2 * time.Second
-	StaleAfter          = 10 * time.Second
+	Delay               = time.Minute
+	StaleAfter          = 10 * time.Minute
 )
 
 type TickerPrice struct {
