@@ -51,6 +51,7 @@ func (fp *fairPrice) getStream(t Ticker) chan sourcePrice {
 	return fp.streams[t]
 }
 
+// AddSource registers a PriceStreamSubscriber instance as a source for a ticker.
 func (fp *fairPrice) AddSource(t Ticker, name string, pss PriceStreamSubscriber) {
 	prChan, erChan := pss.SubscribePriceStream(t)
 	stream := fp.getStream(t)
@@ -69,6 +70,7 @@ func (fp *fairPrice) AddSource(t Ticker, name string, pss PriceStreamSubscriber)
 	}()
 }
 
+// SubscribePriceStream returns a stream of combined prices from registered sources.
 func (fp *fairPrice) SubscribePriceStream(t Ticker) (chan TickerPrice, chan error) {
 	priceChan := make(chan TickerPrice)
 	errChan := make(chan error)
@@ -84,28 +86,14 @@ func (fp *fairPrice) SubscribePriceStream(t Ticker) (chan TickerPrice, chan erro
 				if len(sourcePrices) == 0 {
 					errChan <- errors.New("no sources")
 				} else {
-					s := decimal.Zero
-					num := decimal.Zero
-					for name, price := range sourcePrices {
-						pr, err := decimal.NewFromString(price.Price)
-						if err != nil {
-							errChan <- fmt.Errorf("invalid price for %s", name)
-						} else {
-							since := time.Since(price.Time)
-							if since < StaleAfter {
-								weight := decimal.NewFromInt(int64((StaleAfter - since) / time.Second))
-								s = s.Add(pr.Mul(weight))
-								num = num.Add(weight)
-							}
-						}
-					}
-					if num.Equal(decimal.Zero) {
-						errChan <- errors.New("no valid sources")
+					res, err := fp.calculate(sourcePrices)
+					if err != nil {
+						errChan <- err
 					} else {
 						priceChan <- TickerPrice{
 							Ticker: t,
 							Time:   time.Now(),
-							Price:  s.Div(num).Round(2).String(),
+							Price:  res,
 						}
 					}
 				}
@@ -117,4 +105,26 @@ func (fp *fairPrice) SubscribePriceStream(t Ticker) (chan TickerPrice, chan erro
 	}()
 
 	return priceChan, errChan
+}
+
+// Calculate a combined fair price using weighted average with the remaining time until the stale timeout as weight.
+func (fp *fairPrice) calculate(sourcePrices map[string]TickerPrice) (string, error) {
+	s := decimal.Zero
+	num := decimal.Zero
+	for _, price := range sourcePrices {
+		pr, err := decimal.NewFromString(price.Price)
+		if err == nil {
+			since := time.Since(price.Time)
+			if since < StaleAfter {
+				weight := decimal.NewFromInt(int64((StaleAfter - since) / time.Second))
+				s = s.Add(pr.Mul(weight))
+				num = num.Add(weight)
+			}
+		}
+	}
+	if num.Equal(decimal.Zero) {
+		return "", errors.New("no valid sources")
+	}
+
+	return s.Div(num).Round(2).String(), nil
 }
